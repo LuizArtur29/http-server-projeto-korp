@@ -1,0 +1,20 @@
+services:
+  http-server-projeto-korp:
+    image: http-server-projeto-korp:local
+    networks:
+      - korp-network
+    expose:
+      - "8080"
+
+  nginx:
+    image: nginx:1.27.5-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx:/etc/nginx/conf.d:ro
+    networks:
+      - korp-network
+
+networks:
+  korp-network:
+    driver: bridge
