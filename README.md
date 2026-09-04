@@ -9,9 +9,9 @@ Projeto desenvolvido como parte de um desafio técnico DevOps, com foco em const
 - [x] Docker Compose
 - [x] Rede Docker bridge
 - [x] NGINX como proxy reverso
-- [ ] Prometheus
-- [ ] Grafana
-- [ ] Dashboard de observabilidade
+- [x] Prometheus
+- [x] Grafana
+- [x] Dashboard de observabilidade
 - [ ] Automação completa com Ansible
 - [ ] CI
 
@@ -593,15 +593,618 @@ Isso comprova que o fluxo externo ocorre exclusivamente através do NGINX.
 
 ---
 
-# Próximas etapas
+# Parte 2 — Monitoramento e Observabilidade
 
-A próxima etapa adicionará observabilidade utilizando:
+A segunda etapa do projeto adiciona uma camada de monitoramento ao serviço `http-server-projeto-korp`.
+
+A arquitetura utiliza Prometheus para coleta e armazenamento das métricas e Grafana para visualização dos dados.
+
+## Arquitetura de observabilidade
 
 ```text
-Prometheus
-Grafana
+                              Host
+                               │
+                               │ :80
+                               ▼
+                        ┌─────────────┐
+                        │    NGINX    │
+                        └──────┬──────┘
+                               │
+                               │ :8080
+                               ▼
+                    ┌──────────────────────────┐
+                    │ http-server-projeto-korp │
+                    │                          │
+                    │ /projeto-korp            │
+                    │ /healthz                 │
+                    │ /metrics                 │
+                    └────────────┬─────────────┘
+                                 │
+                                 │ scrape /metrics
+                                 ▼
+                         ┌──────────────┐
+                         │  Prometheus  │
+                         │    :9090     │
+                         └──────┬───────┘
+                                │
+                                │ datasource
+                                ▼
+                          ┌───────────┐
+                          │  Grafana  │
+                          │   :3000   │
+                          └───────────┘
+
+                         Docker bridge network
 ```
 
-O Prometheus realizará o scrape do endpoint `/metrics` da aplicação.
+O Prometheus acessa diretamente o serviço Go através da rede interna do Docker.
 
-O Grafana será configurado de forma automatizada através de provisioning para disponibilizar dashboards sem configuração manual.
+O tráfego de monitoramento não passa pelo NGINX, pois o proxy reverso é utilizado como ponto de entrada da aplicação, enquanto a coleta de métricas ocorre internamente entre os containers.
+
+---
+
+## Prometheus
+
+O Prometheus é responsável por realizar o scrape periódico das métricas expostas pela aplicação.
+
+A aplicação disponibiliza as métricas através do endpoint:
+
+```text
+/metrics
+```
+
+O target configurado no Prometheus utiliza o DNS interno do Docker:
+
+```text
+http-server-projeto-korp:8080
+```
+
+Exemplo da configuração:
+
+```yaml
+scrape_configs:
+  - job_name: "http-server-projeto-korp"
+    metrics_path: /metrics
+
+    static_configs:
+      - targets:
+          - "http-server-projeto-korp:8080"
+```
+
+Essa abordagem evita dependência de endereços IP dos containers.
+
+---
+
+## Disponibilidade do serviço
+
+A disponibilidade é monitorada utilizando a métrica nativa do Prometheus:
+
+```promql
+up{job="http-server-projeto-korp"}
+```
+
+O Prometheus gera automaticamente essa métrica a cada tentativa de scrape.
+
+Valores possíveis:
+
+```text
+1 → target disponível
+0 → target indisponível
+```
+
+Essa abordagem evita a criação de uma métrica customizada apenas para representar disponibilidade.
+
+O endpoint `/healthz` continua disponível para health checks, troubleshooting e futuras integrações, enquanto a métrica `up` é utilizada para monitoramento pelo Prometheus.
+
+---
+
+## Volume de requisições
+
+A aplicação implementa um contador Prometheus:
+
+```text
+http_requests_total
+```
+
+A métrica utiliza as labels:
+
+```text
+method
+route
+status
+```
+
+Exemplo:
+
+```text
+http_requests_total{
+  method="GET",
+  route="/projeto-korp",
+  status="200"
+}
+```
+
+Isso permite analisar não somente o número total de requisições, mas também separar o tráfego por método, endpoint e código HTTP.
+
+---
+
+## Taxa de requisições
+
+Para análise do comportamento do serviço ao longo do tempo, o dashboard utiliza `rate()` em vez de apenas apresentar o valor acumulado do contador.
+
+Consulta utilizada:
+
+```promql
+sum(
+  rate(
+    http_requests_total{
+      route="/projeto-korp"
+    }[1m]
+  )
+)
+```
+
+O resultado representa aproximadamente a quantidade de requisições processadas por segundo.
+
+---
+
+## Latência
+
+Além das métricas obrigatórias, a aplicação expõe um histograma:
+
+```text
+http_request_duration_seconds
+```
+
+A partir dele, o dashboard calcula a latência no percentil 95.
+
+Consulta:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le) (
+    rate(
+      http_request_duration_seconds_bucket{
+        route="/projeto-korp"
+      }[5m]
+    )
+  )
+)
+```
+
+O p95 representa o tempo abaixo do qual aproximadamente 95% das requisições foram processadas.
+
+Essa métrica fornece uma visão mais útil do comportamento do serviço do que apenas uma média de latência.
+
+---
+
+## Requisições simultâneas
+
+A aplicação também expõe:
+
+```text
+http_requests_in_flight
+```
+
+Essa métrica representa o número de requisições sendo processadas simultaneamente.
+
+Ela permite observar alterações no nível de concorrência durante testes de carga ou picos de tráfego.
+
+---
+
+# Grafana
+
+O Grafana é utilizado como camada de visualização das métricas armazenadas no Prometheus.
+
+O datasource Prometheus é configurado automaticamente através do mecanismo de provisioning do Grafana.
+
+O Grafana se comunica com:
+
+```text
+http://prometheus:9090
+```
+
+utilizando a rede interna do Docker.
+
+---
+
+## Provisionamento automático do datasource
+
+Arquivo:
+
+```text
+monitoring/grafana/provisioning/datasources/datasource.yml
+```
+
+Exemplo:
+
+```yaml
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+```
+
+Foi definido um UID fixo:
+
+```text
+prometheus
+```
+
+Isso permite que o dashboard referencie o datasource de forma determinística, sem depender de IDs gerados automaticamente pelo Grafana.
+
+---
+
+## Provisionamento automático do dashboard
+
+O carregamento de dashboards também é configurado através de provisioning.
+
+Arquivo:
+
+```text
+monitoring/grafana/provisioning/dashboards/dashboards.yml
+```
+
+Os dashboards são armazenados em:
+
+```text
+monitoring/grafana/dashboards/
+```
+
+e montados no container no caminho:
+
+```text
+/var/lib/grafana/dashboards
+```
+
+O dashboard principal é definido no arquivo:
+
+```text
+http-server-projeto-korp-dashboard.json
+```
+
+Dessa forma, não é necessário criar manualmente o datasource ou reconstruir o dashboard após recriar o container.
+
+---
+
+# Dashboard
+
+O dashboard:
+
+```text
+HTTP Server - Projeto Korp
+```
+
+foi criado para apresentar tanto os requisitos mínimos do desafio quanto métricas adicionais úteis para análise operacional.
+
+Os painéis implementados são:
+
+| Painel | Finalidade |
+|---|---|
+| Service Availability | Indica se o serviço está disponível para o Prometheus |
+| Total Requests | Total de requisições recebidas |
+| Request Rate | Taxa de requisições por segundo |
+| Latency p95 | Percentil 95 da duração das requisições |
+| Requests by HTTP Status | Distribuição das requisições por status HTTP |
+| Requests In Flight | Requisições processadas simultaneamente |
+
+---
+
+## Service Availability
+
+Consulta:
+
+```promql
+up{job="http-server-projeto-korp"}
+```
+
+O painel utiliza uma visualização `Stat`, apresentando:
+
+```text
+UP
+```
+
+quando o serviço está disponível.
+
+---
+
+## Total Requests
+
+Consulta:
+
+```promql
+sum(
+  http_requests_total{
+    route="/projeto-korp"
+  }
+)
+```
+
+Apresenta o total acumulado de requisições do endpoint principal.
+
+---
+
+## Request Rate
+
+Consulta:
+
+```promql
+sum(
+  rate(
+    http_requests_total{
+      route="/projeto-korp"
+    }[1m]
+  )
+)
+```
+
+O painel apresenta a evolução do throughput da aplicação ao longo do tempo.
+
+---
+
+## Latency p95
+
+Consulta:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le) (
+    rate(
+      http_request_duration_seconds_bucket{
+        route="/projeto-korp"
+      }[5m]
+    )
+  )
+)
+```
+
+Permite observar variações no tempo de resposta do serviço.
+
+---
+
+## Requests by HTTP Status
+
+Consulta:
+
+```promql
+sum by (status) (
+  rate(
+    http_requests_total{
+      route="/projeto-korp"
+    }[5m]
+  )
+)
+```
+
+As séries são separadas utilizando o código HTTP.
+
+Por exemplo:
+
+```text
+HTTP 200
+HTTP 405
+```
+
+Isso facilita a identificação de aumento em respostas de erro.
+
+---
+
+## Requests In Flight
+
+Consulta:
+
+```promql
+http_requests_in_flight
+```
+
+Esse painel permite acompanhar o nível de concorrência da aplicação.
+
+---
+
+# Exposição dos componentes de observabilidade
+
+Prometheus e Grafana são ferramentas administrativas e não precisam ficar disponíveis publicamente.
+
+Por esse motivo, suas portas são vinculadas apenas ao loopback do host:
+
+```yaml
+ports:
+  - "127.0.0.1:9090:9090"
+```
+
+para o Prometheus e:
+
+```yaml
+ports:
+  - "127.0.0.1:3000:3000"
+```
+
+para o Grafana.
+
+Assim:
+
+```text
+Prometheus → localhost:9090
+Grafana    → localhost:3000
+```
+
+e não ficam diretamente disponíveis em outras interfaces de rede da máquina.
+
+---
+
+# Imagens Docker
+
+Foram utilizadas imagens oficiais dos respectivos projetos com versões explicitamente definidas.
+
+Exemplo:
+
+```text
+prom/prometheus:<versão-pinada>
+grafana/grafana:<versão-pinada>
+```
+
+Foi evitado o uso da tag:
+
+```text
+latest
+```
+
+para reduzir variações entre diferentes execuções do ambiente.
+
+Para componentes de infraestrutura de terceiros, foi priorizada a utilização das imagens mantidas oficialmente pelos projetos em vez da criação de imagens customizadas.
+
+---
+
+# Persistência da configuração
+
+As configurações do Prometheus e Grafana são mantidas no repositório e montadas nos containers como volumes.
+
+Sempre que possível, arquivos de configuração são montados como somente leitura:
+
+```text
+:ro
+```
+
+Isso impede alterações acidentais dentro dos containers e mantém o repositório como fonte de verdade da configuração.
+
+---
+
+# Validação
+
+## Verificar containers
+
+```bash
+docker compose ps
+```
+
+Os componentes esperados são:
+
+```text
+http-server-projeto-korp
+nginx
+prometheus
+grafana
+```
+
+---
+
+## Verificar Prometheus
+
+A interface pode ser acessada em:
+
+```text
+http://localhost:9090
+```
+
+Consulta para disponibilidade:
+
+```promql
+up{job="http-server-projeto-korp"}
+```
+
+Resultado esperado:
+
+```text
+1
+```
+
+---
+
+## Gerar tráfego
+
+Exemplo:
+
+```bash
+seq 1 100 | xargs -n1 -P10   curl -s http://localhost/projeto-korp > /dev/null
+```
+
+Após a execução, as métricas de volume e taxa de requisições devem apresentar alteração.
+
+---
+
+## Testar códigos HTTP diferentes
+
+Para validar a separação por status:
+
+```bash
+for i in $(seq 1 20); do
+  curl -s -X POST     http://localhost/projeto-korp > /dev/null
+done
+```
+
+Como o endpoint aceita apenas `GET`, essas requisições devem resultar em:
+
+```text
+405 Method Not Allowed
+```
+
+e aparecer no dashboard como uma série separada.
+
+---
+
+# Decisões arquiteturais da Parte 2
+
+| Decisão | Motivação |
+|---|---|
+| Prometheus para coleta | Solução adequada ao formato de métricas utilizado |
+| `/metrics` diretamente no serviço | Coleta interna sem necessidade de passar pelo proxy |
+| Métrica nativa `up` | Evita duplicar conceito de disponibilidade |
+| Counter para requisições | Modelo apropriado para eventos acumulativos |
+| Histogram para latência | Permite cálculo de percentis como p95 |
+| Labels controladas | Permitem análise sem cardinalidade desnecessária |
+| Grafana para visualização | Dashboards operacionais sobre Prometheus |
+| UID fixo no datasource | Referência determinística nos dashboards |
+| Provisioning por arquivos | Ambiente reproduzível sem configuração manual |
+| Dashboard versionado em JSON | Infraestrutura e observabilidade como código |
+| Portas administrativas em loopback | Redução da superfície de exposição |
+| Configurações montadas read-only | Evita alterações acidentais |
+| Imagens com versão pinada | Maior previsibilidade do ambiente |
+| Dashboard com p95 e status HTTP | Observabilidade além do mínimo exigido |
+
+---
+
+# Resultado da Parte 2
+
+Com a implementação da camada de observabilidade, o ambiente permite acompanhar:
+
+```text
+Disponibilidade
+Volume de requisições
+Taxa de requisições
+Latência p95
+Status HTTP
+Concorrência
+```
+
+O Prometheus coleta automaticamente as métricas do serviço e o Grafana é inicializado com datasource e dashboard provisionados através de arquivos versionados no repositório.
+
+Isso permite recriar a camada de observabilidade sem configuração manual.
+
+---
+
+# Próxima etapa
+
+A próxima etapa consiste em automatizar todo o ambiente através do Ansible.
+
+A automação deverá contemplar:
+
+```text
+Instalação do Docker
+Criação da rede Docker
+Build da aplicação
+Execução dos containers
+Configuração do NGINX
+Configuração do Prometheus
+Configuração do Grafana
+Validação HTTP do serviço
+```
+
+O objetivo será provisionar o ambiente completo utilizando um único comando.

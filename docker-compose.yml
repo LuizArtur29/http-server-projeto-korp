@@ -15,6 +15,33 @@ services:
     networks:
       - korp-network
 
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      - korp-network
+    depends_on:
+      - http-server-projeto-korp
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.2.1
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - korp-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 networks:
   korp-network:
     driver: bridge
