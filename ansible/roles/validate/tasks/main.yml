@@ -1,0 +1,47 @@
+- name: Wait for HTTP service to become available
+  ansible.builtin.uri:
+    url: "{{ service_url }}"
+    method: GET
+    status_code: 200
+    return_content: true
+  register: service_response
+  retries: 10
+  delay: 3
+  until: service_response.status == 200
+  when: not ansible_check_mode
+
+- name: Display service response
+  ansible.builtin.debug:
+    var: service_response.json
+  when: not ansible_check_mode
+
+- name: Validate Prometheus
+  ansible.builtin.uri:
+    url: http://localhost:9090/-/ready
+    method: GET
+    status_code: 200
+  register: prometheus_response
+  retries: 10
+  delay: 3
+  until: prometheus_response.status == 200
+  when: not ansible_check_mode
+
+- name: Validate Grafana
+  ansible.builtin.uri:
+    url: http://localhost:3000/api/health
+    method: GET
+    status_code: 200
+    return_content: true
+  register: grafana_response
+  retries: 10
+  delay: 3
+  until: grafana_response.status == 200
+  when: not ansible_check_mode
+
+- name: Display monitoring validation
+  ansible.builtin.debug:
+    msg:
+      - "Application: OK"
+      - "Prometheus: OK"
+      - "Grafana: {{ grafana_response.json.database | default('OK') }}"
+  when: not ansible_check_mode

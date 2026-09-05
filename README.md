@@ -1190,21 +1190,615 @@ Isso permite recriar a camada de observabilidade sem configuração manual.
 
 ---
 
-# Próxima etapa
+# Parte 3 — Automação com Ansible
 
-A próxima etapa consiste em automatizar todo o ambiente através do Ansible.
+A terceira etapa do projeto automatiza o provisionamento completo da infraestrutura utilizada pelo `http-server-projeto-korp`.
 
-A automação deverá contemplar:
+O objetivo é permitir que todo o ambiente seja preparado e validado com um único comando Ansible, contemplando instalação do Docker, sincronização dos arquivos do projeto, criação da rede Docker, build da imagem da aplicação, inicialização da stack com Docker Compose e validação dos principais serviços.
+
+## Objetivos da automação
+
+A automação cobre:
+
+- instalação do Docker;
+- habilitação do serviço Docker;
+- detecção automática da distribuição Linux;
+- suporte a Debian e Arch Linux/CachyOS;
+- sincronização do projeto para o host;
+- criação da rede Docker;
+- build da imagem da aplicação;
+- inicialização da stack via Docker Compose;
+- configuração do NGINX;
+- configuração do Prometheus;
+- configuração do Grafana;
+- validação HTTP da aplicação;
+- validação do Prometheus;
+- validação do Grafana.
+
+## Estrutura do Ansible
 
 ```text
-Instalação do Docker
-Criação da rede Docker
-Build da aplicação
-Execução dos containers
-Configuração do NGINX
-Configuração do Prometheus
-Configuração do Grafana
-Validação HTTP do serviço
+ansible/
+├── ansible.cfg
+├── inventory/
+│   └── hosts.ini
+├── group_vars/
+│   └── all.yml
+├── requirements.yml
+├── roles/
+│   ├── docker/
+│   │   ├── defaults/
+│   │   │   └── main.yml
+│   │   └── tasks/
+│   │       ├── main.yml
+│   │       ├── debian.yml
+│   │       └── archlinux.yml
+│   ├── deploy/
+│   │   └── tasks/
+│   │       └── main.yml
+│   └── validate/
+│       └── tasks/
+│           └── main.yml
+└── site.yml
 ```
 
-O objetivo será provisionar o ambiente completo utilizando um único comando.
+| Role | Responsabilidade |
+|---|---|
+| `docker` | Instalação e configuração do Docker |
+| `deploy` | Sincronização do projeto, rede, imagem e Compose |
+| `validate` | Validação da aplicação e dos componentes de monitoramento |
+
+## Execução
+
+Dentro da pasta `ansible`:
+
+```bash
+ansible-playbook site.yml -K
+```
+
+A opção `-K` solicita a senha usada pelo `become`, permitindo executar tarefas administrativas com privilégios elevados.
+
+O playbook principal:
+
+```yaml
+---
+- name: Provision Projeto Korp environment
+  hosts: korp
+  become: true
+
+  roles:
+    - docker
+    - deploy
+    - validate
+```
+
+## Inventory
+
+Para validação local:
+
+```ini
+[korp]
+localhost ansible_connection=local
+```
+
+Para um host remoto, o inventory pode ser alterado, por exemplo:
+
+```ini
+[korp]
+192.168.1.100 ansible_user=usuario
+```
+
+## Variáveis
+
+Arquivo:
+
+```text
+ansible/group_vars/all.yml
+```
+
+Exemplo:
+
+```yaml
+project_name: http-server-projeto-korp
+project_dir: /opt/http-server-projeto-korp
+docker_network_name: korp-network
+
+service_url: http://localhost/projeto-korp
+```
+
+## Dependências Ansible
+
+Arquivo:
+
+```text
+ansible/requirements.yml
+```
+
+```yaml
+---
+collections:
+  - name: community.docker
+  - name: community.general
+  - name: ansible.posix
+```
+
+Instalação:
+
+```bash
+ansible-galaxy collection install -r requirements.yml
+```
+
+## Role Docker
+
+A role `docker` detecta automaticamente o sistema operacional com Ansible facts.
+
+```yaml
+- name: Display detected operating system
+  ansible.builtin.debug:
+    msg: >-
+      Distribution={{ ansible_facts["distribution"] }}
+      Family={{ ansible_facts["os_family"] }}
+      Architecture={{ ansible_facts["architecture"] }}
+```
+
+Durante a validação em CachyOS:
+
+```text
+Distribution=Archlinux
+Family=Archlinux
+Architecture=x86_64
+```
+
+### Seleção da distribuição
+
+```yaml
+- name: Install Docker on Debian-based systems
+  ansible.builtin.include_tasks: debian.yml
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Install Docker on Arch Linux-based systems
+  ansible.builtin.include_tasks: archlinux.yml
+  when: ansible_facts["os_family"] == "Archlinux"
+```
+
+Sistemas não suportados geram falha explícita:
+
+```yaml
+- name: Fail when operating system is unsupported
+  ansible.builtin.fail:
+    msg: >-
+      Unsupported operating system:
+      {{ ansible_facts["distribution"] }}
+      ({{ ansible_facts["os_family"] }}).
+  when:
+    - ansible_facts["os_family"] != "Debian"
+    - ansible_facts["os_family"] != "Archlinux"
+```
+
+## Docker em Arch Linux / CachyOS
+
+```yaml
+---
+- name: Install Docker packages on Arch Linux
+  community.general.pacman:
+    name:
+      - docker
+      - docker-compose
+    state: present
+```
+
+## Docker em Debian
+
+Para Debian, a automação utiliza o repositório oficial do Docker.
+
+O fluxo contempla:
+
+```text
+dependências do repositório
+/etc/apt/keyrings
+chave de assinatura
+repositório Docker
+cache APT
+Docker Engine
+Docker Compose Plugin
+```
+
+Mapeamento de arquitetura:
+
+```yaml
+docker_apt_architecture_map:
+  x86_64: amd64
+  aarch64: arm64
+```
+
+## Serviço Docker
+
+```yaml
+- name: Ensure Docker service is enabled and running
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+```
+
+## Role Deploy
+
+Fluxo:
+
+```text
+Criar diretório
+      ↓
+Sincronizar arquivos
+      ↓
+Criar rede Docker
+      ↓
+Build da imagem
+      ↓
+Executar Docker Compose
+```
+
+### Diretório do projeto
+
+```yaml
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ project_dir }}"
+    state: directory
+    mode: "0755"
+```
+
+O destino utilizado é:
+
+```text
+/opt/http-server-projeto-korp
+```
+
+### Sincronização do projeto
+
+```yaml
+- name: Synchronize project files
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/../"
+    dest: "{{ project_dir }}/"
+    archive: true
+    delete: true
+    rsync_opts:
+      - "--exclude=.git"
+      - "--exclude=.idea"
+      - "--exclude=ansible"
+```
+
+A sincronização via `rsync` evita alterações desnecessárias quando os arquivos já estão atualizados.
+
+### Rede Docker
+
+```yaml
+- name: Ensure Docker network exists
+  community.docker.docker_network:
+    name: "{{ docker_network_name }}"
+    driver: bridge
+    state: present
+```
+
+A rede utilizada é:
+
+```text
+korp-network
+```
+
+No Compose:
+
+```yaml
+networks:
+  korp-network:
+    name: korp-network
+    external: true
+```
+
+Assim, a criação da rede fica explicitamente sob responsabilidade do Ansible.
+
+### Build da aplicação
+
+```yaml
+- name: Build application Docker image
+  community.docker.docker_image:
+    name: http-server-projeto-korp
+    tag: local
+    source: build
+    build:
+      path: "{{ project_dir }}"
+    state: present
+    force_source: false
+```
+
+Imagem resultante:
+
+```text
+http-server-projeto-korp:local
+```
+
+### Docker Compose
+
+```yaml
+- name: Start Docker Compose stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_dir }}"
+    state: present
+    pull: missing
+```
+
+A stack inclui:
+
+```text
+http-server-projeto-korp
+nginx
+prometheus
+grafana
+```
+
+## Check mode
+
+O playbook aceita:
+
+```bash
+ansible-playbook site.yml --check -K
+```
+
+Operações que dependem de alterações reais são puladas com:
+
+```yaml
+when: not ansible_check_mode
+```
+
+## Role Validate
+
+A role valida:
+
+```text
+Aplicação
+Prometheus
+Grafana
+```
+
+### Validação da aplicação
+
+```yaml
+- name: Wait for HTTP service to become available
+  ansible.builtin.uri:
+    url: "{{ service_url }}"
+    method: GET
+    status_code: 200
+    return_content: true
+  register: service_response
+  retries: 10
+  delay: 3
+  until: service_response.status == 200
+  when: not ansible_check_mode
+```
+
+A resposta é exibida:
+
+```yaml
+- name: Display service response
+  ansible.builtin.debug:
+    var: service_response.json
+  when: not ansible_check_mode
+```
+
+Exemplo validado:
+
+```json
+{
+  "horario": "2026-09-05T01:00:56Z",
+  "nome": "Projeto Korp"
+}
+```
+
+### Validação do Prometheus
+
+Endpoint:
+
+```text
+http://localhost:9090/-/ready
+```
+
+```yaml
+- name: Validate Prometheus
+  ansible.builtin.uri:
+    url: http://localhost:9090/-/ready
+    method: GET
+    status_code: 200
+  register: prometheus_response
+  retries: 10
+  delay: 3
+  until: prometheus_response.status == 200
+  when: not ansible_check_mode
+```
+
+### Validação do Grafana
+
+Endpoint:
+
+```text
+http://localhost:3000/api/health
+```
+
+```yaml
+- name: Validate Grafana
+  ansible.builtin.uri:
+    url: http://localhost:3000/api/health
+    method: GET
+    status_code: 200
+    return_content: true
+  register: grafana_response
+  retries: 10
+  delay: 3
+  until: grafana_response.status == 200
+  when: not ansible_check_mode
+```
+
+Resumo final:
+
+```text
+Application: OK
+Prometheus: OK
+Grafana: ok
+```
+
+## Idempotência
+
+Após o primeiro provisionamento, uma nova execução produziu:
+
+```text
+PLAY RECAP
+localhost : ok=15 changed=0 unreachable=0 failed=0 skipped=3
+```
+
+O resultado `changed=0` demonstra que o ambiente já estava no estado desejado e nenhuma alteração desnecessária foi aplicada.
+
+As validações continuam sendo executadas, mesmo sem alterações.
+
+## Decisões arquiteturais
+
+| Decisão | Motivação |
+|---|---|
+| Roles separadas | Organização de responsabilidades |
+| Ansible facts | Detecção automática do sistema operacional |
+| Suporte Debian e Arch/CachyOS | Maior portabilidade |
+| Falha explícita em SO não suportado | Evita execução em ambiente não validado |
+| `community.docker` | Gerenciamento declarativo de recursos Docker |
+| `ansible.posix.synchronize` | Sincronização eficiente e idempotente |
+| Rede criada pelo Ansible | Atende explicitamente ao requisito |
+| Rede externa no Compose | Evita duplicação de redes |
+| `docker_compose_v2` | Gerenciamento declarativo da stack |
+| Validação com `uri` | Evita dependência de shell/curl |
+| Retries | Trata o tempo de inicialização dos serviços |
+| Check mode | Permite simular o playbook |
+| `changed=0` na segunda execução | Demonstra idempotência |
+| Um único playbook | Simplifica o provisionamento completo |
+
+## Fluxo completo
+
+```text
+ansible-playbook site.yml -K
+            │
+            ▼
+      Gathering Facts
+            │
+            ▼
+    Detecta distribuição
+            │
+     ┌──────┴──────┐
+     ▼             ▼
+  Debian       Arch/CachyOS
+     │             │
+     └──────┬──────┘
+            ▼
+      Instala Docker
+            │
+            ▼
+     Habilita Docker
+            │
+            ▼
+     Sincroniza projeto
+            │
+            ▼
+     Cria korp-network
+            │
+            ▼
+        Build image
+            │
+            ▼
+   Docker Compose stack
+            │
+     ┌──────┼────────┐
+     ▼      ▼        ▼
+   NGINX Prometheus Grafana
+     │
+     ▼
+ Aplicação Go
+            │
+            ▼
+       Validações
+            │
+            ▼
+     Provisionamento OK
+```
+
+## Validação recomendada
+
+### Verificar sintaxe
+
+```bash
+ansible-playbook --syntax-check site.yml
+```
+
+### Executar em check mode
+
+```bash
+ansible-playbook site.yml --check -K
+```
+
+### Executar provisionamento
+
+```bash
+ansible-playbook site.yml -K
+```
+
+### Validar idempotência
+
+Execute novamente:
+
+```bash
+ansible-playbook site.yml -K
+```
+
+Resultado esperado:
+
+```text
+changed=0
+failed=0
+```
+
+## Resultado da Parte 3
+
+A infraestrutura completa do projeto pode ser provisionada através de um único comando Ansible.
+
+O processo automatiza:
+
+```text
+Docker
+Rede Docker
+Build da aplicação
+Docker Compose
+NGINX
+Prometheus
+Grafana
+Validação HTTP
+Validação da observabilidade
+```
+
+A implementação apresenta comportamento idempotente, permitindo repetir o playbook sem alterações desnecessárias.
+
+## Próximos passos
+
+Com as três partes principais concluídas, os próximos passos recomendados são:
+
+```text
+Revisão final contra os critérios do desafio
+Documentação consolidada no README
+Validação em uma instalação limpa Debian
+Revisão do repositório público
+CI para testes, lint e build
+```
+
+Possíveis verificações de CI:
+
+```text
+gofmt
+go vet
+go test
+docker build
+ansible-lint
+```
+

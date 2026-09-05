@@ -1,0 +1,50 @@
+---
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ project_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Synchronize project files
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/../"
+    dest: "{{ project_dir }}/"
+    archive: true
+    delete: true
+    rsync_opts:
+      - "--exclude=.git"
+      - "--exclude=.idea"
+      - "--exclude=ansible"
+
+- name: Ensure Docker network exists
+  community.docker.docker_network:
+    name: "{{ docker_network_name }}"
+    driver: bridge
+    state: present
+  when: not ansible_check_mode
+
+- name: Build application Docker image
+  community.docker.docker_image:
+    name: http-server-projeto-korp
+    tag: local
+    source: build
+    build:
+      path: "{{ project_dir }}"
+    state: present
+    force_source: false
+  when: not ansible_check_mode
+
+- name: Start Docker Compose stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ project_dir }}"
+    state: present
+    pull: missing
+  when: not ansible_check_mode
+
+- name: Explain skipped deployment in check mode
+  ansible.builtin.debug:
+    msg: >-
+      Docker build and Compose deployment are skipped in check mode
+      because they depend on files that are not actually created
+      during a dry run.
+  when: ansible_check_mode

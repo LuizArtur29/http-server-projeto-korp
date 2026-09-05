@@ -1,0 +1,7 @@
+---
+- name: Install Docker packages on Arch Linux
+  community.general.pacman:
+    name:
+      - docker
+      - docker-compose
+    state: present

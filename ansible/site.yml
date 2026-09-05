@@ -1,0 +1,9 @@
+---
+- name: Provision Projeto Korp environment
+  hosts: korp
+  become: true
+
+  roles:
+    - docker
+    - deploy
+    - validate

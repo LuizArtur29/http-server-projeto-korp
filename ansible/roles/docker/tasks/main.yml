@@ -1,0 +1,32 @@
+---
+- name: Display detected operating system
+  ansible.builtin.debug:
+    msg: >-
+      Distribution={{ ansible_facts["distribution"] }}
+      Family={{ ansible_facts["os_family"] }}
+      Architecture={{ ansible_facts["architecture"] }}
+
+- name: Install Docker on Debian-based systems
+  ansible.builtin.include_tasks: debian.yml
+  when: ansible_facts["os_family"] == "Debian"
+
+- name: Install Docker on Arch Linux-based systems
+  ansible.builtin.include_tasks: archlinux.yml
+  when: ansible_facts["os_family"] == "Archlinux"
+
+- name: Fail when operating system is unsupported
+  ansible.builtin.fail:
+    msg: >-
+      Unsupported operating system:
+      {{ ansible_facts["distribution"] }}
+      ({{ ansible_facts["os_family"] }}).
+      Supported families are Debian and Archlinux.
+  when:
+    - ansible_facts["os_family"] != "Debian"
+    - ansible_facts["os_family"] != "Archlinux"
+
+- name: Ensure Docker service is enabled and running
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true

@@ -1,0 +1,10 @@
+---
+docker_apt_architecture_map:
+  x86_64: amd64
+  aarch64: arm64
+
+docker_apt_architecture: >-
+  {{ docker_apt_architecture_map.get(
+    ansible_facts["architecture"],
+    ansible_facts["architecture"]
+  ) }}
