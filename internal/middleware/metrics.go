@@ -55,7 +55,11 @@ type responseWriter struct {
 	statusCode int
 }
 
-func (rw *responseWriter) WriterHeader(code int) {
+func (rw *responseWriter) WriteHeader(code int) {
+	if rw.statusCode != 0 {
+		return
+	}
+
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 }
@@ -69,10 +73,13 @@ func (m *Metrics) Observe(route string, next http.Handler) http.Handler {
 
 		rw := &responseWriter{
 			ResponseWriter: w,
-			statusCode:     http.StatusOK,
 		}
 
 		next.ServeHTTP(rw, r)
+
+		if rw.statusCode == 0 {
+			rw.statusCode = http.StatusOK
+		}
 
 		m.requestTotal.
 			WithLabelValues(

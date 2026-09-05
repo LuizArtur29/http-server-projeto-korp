@@ -1,3 +1,32 @@
+---
+- name: Validate NGINX configuration
+  ansible.builtin.command:
+    cmd: docker compose exec -T nginx nginx -t
+    chdir: "{{ project_dir }}"
+  register: nginx_config_check
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Display NGINX validation result
+  ansible.builtin.debug:
+    msg: "{{ nginx_config_check.stderr }}"
+  when: not ansible_check_mode
+
+- name: Validate Prometheus configuration
+  ansible.builtin.command:
+    cmd: >-
+      docker compose exec -T prometheus
+      promtool check config /etc/prometheus/prometheus.yml
+    chdir: "{{ project_dir }}"
+  register: prometheus_config_check
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Display Prometheus configuration validation
+  ansible.builtin.debug:
+    msg: "{{ prometheus_config_check.stdout }}"
+  when: not ansible_check_mode
+
 - name: Wait for HTTP service to become available
   ansible.builtin.uri:
     url: "{{ service_url }}"
@@ -15,7 +44,7 @@
     var: service_response.json
   when: not ansible_check_mode
 
-- name: Validate Prometheus
+- name: Wait for Prometheus to become ready
   ansible.builtin.uri:
     url: http://localhost:9090/-/ready
     method: GET
@@ -26,7 +55,7 @@
   until: prometheus_response.status == 200
   when: not ansible_check_mode
 
-- name: Validate Grafana
+- name: Wait for Grafana to become healthy
   ansible.builtin.uri:
     url: http://localhost:3000/api/health
     method: GET
@@ -38,10 +67,12 @@
   until: grafana_response.status == 200
   when: not ansible_check_mode
 
-- name: Display monitoring validation
+- name: Display validation summary
   ansible.builtin.debug:
     msg:
+      - "NGINX configuration: OK"
+      - "Prometheus configuration: OK"
       - "Application: OK"
-      - "Prometheus: OK"
+      - "Prometheus readiness: OK"
       - "Grafana: {{ grafana_response.json.database | default('OK') }}"
   when: not ansible_check_mode

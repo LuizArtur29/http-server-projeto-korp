@@ -15,6 +15,7 @@
       - "--exclude=.git"
       - "--exclude=.idea"
       - "--exclude=ansible"
+  register: project_sync
 
 - name: Ensure Docker network exists
   community.docker.docker_network:
@@ -31,7 +32,7 @@
     build:
       path: "{{ project_dir }}"
     state: present
-    force_source: false
+    force_source: "{{ project_sync.changed }}"
   when: not ansible_check_mode
 
 - name: Start Docker Compose stack
