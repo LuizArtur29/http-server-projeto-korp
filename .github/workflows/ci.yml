@@ -49,57 +49,8 @@ jobs:
           docker compose exec -T prometheus \
             promtool check config /etc/prometheus/prometheus.yml
 
-      - name: Wait for application
-        run: |
-          for i in $(seq 1 20); do
-            if curl --fail --silent http://localhost/projeto-korp > /tmp/response.json; then
-              cat /tmp/response.json
-              exit 0
-            fi
-
-            sleep 3
-          done
-
-          echo "Application did not become ready"
-          docker compose ps
-          docker compose logs
-          exit 1
-
-      - name: Wait for Prometheus readiness
-        run: |
-          for i in $(seq 1 20); do
-            if curl --fail --silent http://localhost:9090/-/ready; then
-              echo
-              echo "Prometheus is ready"
-              exit 0
-            fi
-
-            echo "Waiting for Prometheus... attempt ${i}/20"
-            sleep 3
-          done
-
-          echo "Prometheus did not become ready"
-          docker compose ps
-          docker compose logs prometheus
-          exit 1
-
-      - name: Wait for Grafana health
-        run: |
-          for i in $(seq 1 20); do
-            if curl --fail --silent http://localhost:3000/api/health; then
-              echo
-              echo "Grafana is healthy"
-              exit 0
-            fi
-
-            echo "Waiting for Grafana... attempt ${i}/20"
-            sleep 3
-          done
-
-          echo "Grafana did not become healthy"
-          docker compose ps
-          docker compose logs grafana
-          exit 1
+      - name: Run smoke tests
+        run: ./scripts/smoke-test.sh
 
       - name: Show logs on failure
         if: failure()

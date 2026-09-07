@@ -5,6 +5,11 @@ services:
       - korp-network
     expose:
       - "8080"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.50
 
   nginx:
     image: nginx:1.27.5-alpine
@@ -22,6 +27,8 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    mem_limit: 128m
+    cpus: 0.50
 
   prometheus:
     image: prom/prometheus:v3.14.0
@@ -47,6 +54,8 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+    mem_limit: 256m
+    cpus: 0.75
 
   grafana:
     image: grafana/grafana:13.2.1
@@ -68,6 +77,8 @@ services:
       timeout: 3s
       retries: 5
       start_period: 15s
+    mem_limit: 256m
+    cpus: 0.75
 
 networks:
   korp-network:
