@@ -65,11 +65,41 @@ jobs:
           docker compose logs
           exit 1
 
-      - name: Validate Prometheus readiness
-        run: curl --fail http://localhost:9090/-/ready
+      - name: Wait for Prometheus readiness
+        run: |
+          for i in $(seq 1 20); do
+            if curl --fail --silent http://localhost:9090/-/ready; then
+              echo
+              echo "Prometheus is ready"
+              exit 0
+            fi
 
-      - name: Validate Grafana health
-        run: curl --fail http://localhost:3000/api/health
+            echo "Waiting for Prometheus... attempt ${i}/20"
+            sleep 3
+          done
+
+          echo "Prometheus did not become ready"
+          docker compose ps
+          docker compose logs prometheus
+          exit 1
+
+      - name: Wait for Grafana health
+        run: |
+          for i in $(seq 1 20); do
+            if curl --fail --silent http://localhost:3000/api/health; then
+              echo
+              echo "Grafana is healthy"
+              exit 0
+            fi
+
+            echo "Waiting for Grafana... attempt ${i}/20"
+            sleep 3
+          done
+
+          echo "Grafana did not become healthy"
+          docker compose ps
+          docker compose logs grafana
+          exit 1
 
       - name: Show logs on failure
         if: failure()
