@@ -1,5 +1,7 @@
 project_name: http-server-projeto-korp
 project_dir: /opt/http-server-projeto-korp
 docker_network_name: korp-network
+grafana_admin_user: admin
+grafana_admin_password: projeto-korp
 
 service_url: http://localhost/projeto-korp

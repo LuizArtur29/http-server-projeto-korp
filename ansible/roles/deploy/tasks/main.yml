@@ -16,8 +16,17 @@
       - "--exclude=.git"
       - "--exclude=.idea"
       - "--exclude=ansible"
+      - "--exclude=.env"
   register: project_sync
   become: false
+
+- name: Create project directory
+  ansible.builtin.file:
+    path: "{{ project_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
 
 - name: Copy synchronized project to deployment directory
   ansible.builtin.copy:
@@ -28,6 +37,17 @@
     group: root
     mode: preserve
   when: project_sync.changed
+
+- name: Configure Grafana environment
+  ansible.builtin.copy:
+    dest: "{{ project_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      GF_SECURITY_ADMIN_USER={{ grafana_admin_user }}
+      GF_SECURITY_ADMIN_PASSWORD={{ grafana_admin_password }}
+  no_log: true
 
 - name: Ensure Docker network exists
   community.docker.docker_network:
