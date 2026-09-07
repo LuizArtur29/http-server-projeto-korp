@@ -10,6 +10,12 @@ services:
       - no-new-privileges:true
     mem_limit: 128m
     cpus: 0.50
+    labels:
+      org.opencontainers.image.title: "http-server-projeto-korp"
+      org.opencontainers.image.description: "Projeto Korp DevOps challenge"
+      com.korp.project: "http-server-projeto-korp"
+      com.korp.service: "application"
+      com.korp.managed-by: "docker-compose"
 
   nginx:
     image: nginx:1.27.5-alpine
@@ -29,6 +35,12 @@ services:
       start_period: 10s
     mem_limit: 128m
     cpus: 0.50
+    labels:
+      org.opencontainers.image.title: "http-server-projeto-korp"
+      org.opencontainers.image.description: "Projeto Korp DevOps challenge"
+      com.korp.project: "http-server-projeto-korp"
+      com.korp.service: "reverse-proxy"
+      com.korp.managed-by: "docker-compose"
 
   prometheus:
     image: prom/prometheus:v3.14.0
@@ -56,9 +68,18 @@ services:
       start_period: 10s
     mem_limit: 256m
     cpus: 0.75
+    labels:
+      org.opencontainers.image.title: "http-server-projeto-korp"
+      org.opencontainers.image.description: "Projeto Korp DevOps challenge"
+      com.korp.project: "http-server-projeto-korp"
+      com.korp.service: "monitoring"
+      com.korp.managed-by: "docker-compose"
 
   grafana:
     image: grafana/grafana:13.2.1
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?GF_SECURITY_ADMIN_PASSWORD is required}
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
@@ -79,6 +100,12 @@ services:
       start_period: 15s
     mem_limit: 256m
     cpus: 0.75
+    labels:
+      org.opencontainers.image.title: "http-server-projeto-korp"
+      org.opencontainers.image.description: "Projeto Korp DevOps challenge"
+      com.korp.project: "http-server-projeto-korp"
+      com.korp.service: "visualization"
+      com.korp.managed-by: "docker-compose"
 
 networks:
   korp-network:

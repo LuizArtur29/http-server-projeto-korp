@@ -1,14 +1,15 @@
 ---
-- name: Create project directory
+- name: Create temporary project directory
   ansible.builtin.file:
-    path: "{{ project_dir }}"
+    path: "/tmp/http-server-projeto-korp"
     state: directory
     mode: "0755"
+  become: false
 
 - name: Synchronize project files
   ansible.posix.synchronize:
     src: "{{ playbook_dir }}/../"
-    dest: "{{ project_dir }}/"
+    dest: "/tmp/http-server-projeto-korp/"
     archive: true
     delete: true
     rsync_opts:
@@ -16,6 +17,17 @@
       - "--exclude=.idea"
       - "--exclude=ansible"
   register: project_sync
+  become: false
+
+- name: Copy synchronized project to deployment directory
+  ansible.builtin.copy:
+    src: "/tmp/http-server-projeto-korp/"
+    dest: "{{ project_dir }}/"
+    remote_src: true
+    owner: root
+    group: root
+    mode: preserve
+  when: project_sync.changed
 
 - name: Ensure Docker network exists
   community.docker.docker_network:

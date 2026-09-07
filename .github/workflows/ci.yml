@@ -10,6 +10,10 @@ jobs:
   validate:
     runs-on: ubuntu-latest
 
+    env:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ci-only-password
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
